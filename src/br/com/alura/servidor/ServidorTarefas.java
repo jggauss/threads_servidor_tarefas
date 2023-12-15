@@ -3,40 +3,70 @@ package br.com.alura.servidor;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.util.Iterator;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServidorTarefas {
 
-	public static void main(String[] args) throws Exception {
-
+	private ExecutorService threadPool;
+	private ServerSocket servidor;
+	//private volatile boolean estaRodando;
+	private AtomicBoolean estaRodando;
+	private BlockingQueue<String> filaComandos;
+	
+	public ServidorTarefas() throws IOException {
 		System.out.println("--- Iniciando Servidor ---");
-		Runtime runtime = Runtime.getRuntime();
-		int qtdProcessadores = runtime.availableProcessors();
-		System.out.println("Qtd de processadores: " + qtdProcessadores);
+		this.servidor = new ServerSocket(12345);
+		this.threadPool = Executors.newCachedThreadPool(new  FabricaDeThreads());
+		this.estaRodando = new AtomicBoolean(true);
+		this.filaComandos = new ArrayBlockingQueue<String>(2);
+		iniciarConsumidores();
 
-		ServerSocket servidor = new ServerSocket(12345);
+	}
+		
+	private void iniciarConsumidores() {
+		int qtdConsumidores = 2;
+		for (int i = 0; i < qtdConsumidores; i++) {
+			TarefaConsumir tarefa = new TarefaConsumir(filaComandos);
+			this.threadPool.execute(tarefa);
+			
+		}
+		
+	}
 
-		ExecutorService threadPool = Executors.newCachedThreadPool();
-
-		Set<Thread> todasAsThreads = Thread.getAllStackTraces().keySet();
-
-		while (true) {
-			Socket socket = servidor.accept();
-			System.out.println("Aceitando novo cliente na porta :" + socket.getPort());
-
-			for (Thread thread : todasAsThreads) {
-				System.out.println(thread.getName());
+	public void rodar() throws IOException {
+		try {
+			while (this.estaRodando.get()) {
+				Socket socket = servidor.accept();
+				System.out.println("Aceitando novo cliente na porta :" + socket.getPort());
+				DistribuirTarefas distribuirTarefas = new DistribuirTarefas(threadPool, filaComandos ,socket,this);
+				threadPool.execute(distribuirTarefas);
 			}
-
-			DistribuirTarefas distribuirTarefas = new DistribuirTarefas(socket);
-			threadPool.execute(distribuirTarefas);
-			// Thread threadCliente = new Thread(distribuirTarefas);
-			// threadCliente.start();
-
+		} catch (SocketException e) {
+			System.out.println("SocketException, Está rodando : "+ this.estaRodando);
 		}
 
 	}
+	public void parar() throws IOException {
+		this.estaRodando.set(false);
+		servidor.close();
+		threadPool.shutdown();
+//		System.exit(0);
+
+	}
+	public static void main(String[] args) throws Exception {
+
+		ServidorTarefas servidor = new ServidorTarefas();
+		servidor.rodar();
+		servidor.parar();
+	}
+
 
 }
